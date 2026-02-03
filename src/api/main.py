@@ -40,6 +40,7 @@ from src.user_profile import UserProfile, UserProfileManager, initialize_profile
 from src.risk_trajectory import RiskTrajectory, TrajectoryManager, initialize_trajectory_manager, get_trajectory_manager
 from src.event_chains import EventChainDetector, ChainDetectorManager, initialize_chain_detector, get_chain_detector_manager
 from src.temporal_patterns import TemporalPatternDetector, TemporalManager, initialize_temporal_manager, get_temporal_manager
+from src.threat_simulator import ThreatSimulator
 
 # Import logging
 try:
@@ -289,6 +290,31 @@ class TemporalStatistics(BaseModel):
     total_patterns_detected: int
     by_type: Dict[str, int]
 
+# Phase 2B: Threat Simulation Schemas
+class SimulationScenario(BaseModel):
+    """Metadata for a simulation scenario."""
+    name: str
+    description: str
+    parameters: List[Dict[str, Any]]
+
+class SimulationOptions(BaseModel):
+    """Available options for simulation."""
+    users: List[str]
+    scenarios: Dict[str, SimulationScenario]
+
+class SimulationRequest(BaseModel):
+    """Request to inject a simulated threat."""
+    user_id: str
+    scenario_id: str
+    parameters: Dict[str, Any]
+
+class SimulationResponse(BaseModel):
+    """Result of a simulation injection."""
+    status: str
+    message: str
+    events_injected: int
+    timestamp: str
+
 # =============================================================================
 # GLOBAL DATA STORE
 # =============================================================================
@@ -304,6 +330,7 @@ class DataStore:
         self.trajectory_manager: Optional[TrajectoryManager] = None  # Phase 2A: Risk trajectories
         self.chain_manager: Optional[ChainDetectorManager] = None  # Phase 2A: Event chains
         self.temporal_manager: Optional[TemporalManager] = None  # Phase 2A: Temporal patterns
+        self.simulator: Optional[ThreatSimulator] = None  # Phase 2B: Simulation engine
     
     def load(self):
         """Load or reload data and model."""
@@ -332,6 +359,9 @@ class DataStore:
                 logger.info("Initializing temporal pattern analysis...")
                 self.temporal_manager = initialize_temporal_manager(self.df)
                 logger.info(f"✅ Analyzed behavioral history for {len(self.temporal_manager.detectors)} users")
+                
+                # Phase 2B: Initialize simulator with model for real-time scoring
+                self.simulator = ThreatSimulator(RAW_DATA_FILE, PROCESSED_DATA_FILE, self.model)
             
             logger.info("Data and model loaded successfully")
         except Exception as e:
@@ -1037,6 +1067,63 @@ def get_temporal_statistics():
         return TemporalStatistics(**data_store.temporal_manager.get_statistics())
     except Exception as e:
         logger.error(f"Error getting temporal statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# =============================================================================
+# Phase 2B: THREAT SIMULATION ENDPOINTS
+# =============================================================================
+
+@app.get("/simulation/options", response_model=SimulationOptions,
+         summary="Get Simulation Options")
+def get_simulation_options():
+    """Returns metadata for the simulation UI (users, scenarios, parameters)."""
+    if not data_store.is_loaded():
+        raise HTTPException(status_code=503, detail="Service data not loaded")
+    
+    if data_store.simulator is None:
+        raise HTTPException(status_code=503, detail="Simulator not initialized")
+    
+    try:
+        return data_store.simulator.get_simulation_options(data_store.df)
+    except Exception as e:
+        logger.error(f"Error getting simulation options: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/simulation/inject", response_model=SimulationResponse,
+          summary="Inject Simulated Threat")
+def inject_threat(request: SimulationRequest):
+    """
+    Injects a custom-parameterized security threat into a user's history.
+    
+    This writes to the CSV and reloads the system so the threat is detectable.
+    """
+    if not data_store.is_loaded():
+        raise HTTPException(status_code=503, detail="Service data not loaded")
+    
+    if data_store.simulator is None:
+        raise HTTPException(status_code=503, detail="Simulator not initialized")
+    
+    try:
+        # 1. Inject (creates events, pre-calculates ML features & anomaly scores, saves to disk)
+        injected_count = data_store.simulator.inject_threat(
+            request.user_id, 
+            request.scenario_id, 
+            request.parameters,
+            data_store.df
+        )
+        
+        # 2. Reload everything so the new threat is immediately "detected" by managers
+        data_store.reload()
+        
+        return SimulationResponse(
+            status="success",
+            message=f"Successfully injected {request.scenario_id} for user {request.user_id}",
+            events_injected=injected_count,
+            timestamp=datetime.now().isoformat()
+        )
+    except Exception as e:
+        logger.error(f"Simulation injection failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/explain/{event_id}", response_model=ExplanationResponse, summary="Get SHAP Explanation")

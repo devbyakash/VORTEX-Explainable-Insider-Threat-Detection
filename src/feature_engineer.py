@@ -64,34 +64,21 @@ def create_aggregated_features(df):
 
     # Ensure data is sorted for rolling calculations
     df = df.sort_values(by=['user_id', 'timestamp']).reset_index(drop=True)
+    df = df.set_index('timestamp')
 
     # Define the rolling window size
     window = f'{TIME_WINDOW_HOURS}h'
 
-    # Group by user_id
-    grouped = df.groupby('user_id', group_keys=False)
+    # Rolling Sum: Total files accessed in the last X hours
+    df['total_files_24h'] = df.groupby('user_id')['file_access_count'].rolling(window=window, closed='left').sum().reset_index(level=0, drop=True).fillna(0)
 
-    # Function to apply rolling calculation efficiently
-    def apply_rolling(group):
-        # Set timestamp as index for rolling function
-        group = group.set_index('timestamp')
+    # Rolling Mean: Average upload size in the last X hours
+    df['avg_upload_24h'] = df.groupby('user_id')['upload_size_mb'].rolling(window=window, closed='left').mean().reset_index(level=0, drop=True).fillna(0)
 
-        # Rolling Sum: Total files accessed in the last X hours
-        group['total_files_24h'] = group['file_access_count'].rolling(window=window, closed='left').sum().fillna(0)
-
-        # Rolling Mean: Average upload size in the last X hours
-        group['avg_upload_24h'] = group['upload_size_mb'].rolling(window=window, closed='left').mean().fillna(0)
-
-        # Rolling Count: Number of events in the last X hours
-        group['event_count_24h'] = group.index.to_series().rolling(window=window, closed='left').count().fillna(0)
-        
-        # Reset index before returning
-        return group.reset_index()
-
-    # Apply rolling calculations across all user groups
-    df = grouped.apply(apply_rolling)
-
-    return df
+    # Rolling Count: Number of events in the last X hours (use any column for count)
+    df['event_count_24h'] = df.groupby('user_id')['file_access_count'].rolling(window=window, closed='left').count().reset_index(level=0, drop=True).fillna(0)
+    
+    return df.reset_index()
 
 
 def normalize_features(df):

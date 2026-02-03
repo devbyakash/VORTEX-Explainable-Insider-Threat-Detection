@@ -1,19 +1,19 @@
 {
-  "auc_roc": 0.9976366691124082,
-  "f1_anomaly": 0.7455830388692579,
-  "precision_anomaly": 0.6011396011396012,
-  "recall_anomaly": 0.9813953488372092,
-  "total_events": 21057,
-  "total_anomalies": 645,
+  "auc_roc": 0.9975649794863942,
+  "f1_anomaly": 0.8707909162098669,
+  "precision_anomaly": 0.8769716088328076,
+  "recall_anomaly": 0.864696734059098,
+  "total_events": 21132,
+  "total_anomalies": 643,
   "confusion_matrix": [
     [
-      19992,
-      420
+      20411,
+      78
     ],
     [
-      12,
-      633
+      87,
+      556
     ]
   ],
-  "model_last_trained": "2025-12-04T17:41:10.695358"
+  "model_last_trained": "2026-02-03T13:43:04.326604"
 }

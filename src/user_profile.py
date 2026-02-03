@@ -56,6 +56,10 @@ class UserProfile:
             Dictionary containing baseline metrics
         """
         # Filter to normal events only (not flagged as risky)
+        if 'timestamp' in self.historical_events.columns:
+            # Ensure timestamp is datetime for duration calculations
+            self.historical_events['timestamp'] = pd.to_datetime(self.historical_events['timestamp'])
+
         if 'anomaly_score' in self.historical_events.columns:
             normal_events = self.historical_events[
                 self.historical_events['anomaly_score'] > -0.3

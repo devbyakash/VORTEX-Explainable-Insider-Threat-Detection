@@ -542,15 +542,16 @@ class ChainDetectorManager:
             severity_counts[chain['severity']] += 1
         
         users_with_chains = sum(1 for d in self.detectors.values() if len(d.detected_chains) > 0)
+        total_user_count = max(len(self.detectors), 1)
         
         return {
-            'total_users': len(self.detectors),
-            'total_chains': len(all_chains),
-            'critical_chains': severity_counts['Critical'],
-            'high_chains': severity_counts['High'],
-            'medium_chains': severity_counts['Medium'],
-            'users_with_chains': users_with_chains,
-            'avg_chains_per_user': round(len(all_chains) / len(self.detectors), 2)
+            'total_users': int(len(self.detectors)),
+            'total_chains': int(len(all_chains)),
+            'critical_chains': int(severity_counts['Critical']),
+            'high_chains': int(severity_counts['High']),
+            'medium_chains': int(severity_counts['Medium']),
+            'users_with_chains': int(users_with_chains),
+            'avg_chains_per_user': float(round(len(all_chains) / total_user_count, 2))
         }
 
 

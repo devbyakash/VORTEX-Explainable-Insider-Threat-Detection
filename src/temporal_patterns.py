@@ -114,9 +114,9 @@ class TemporalPatternDetector:
                 'severity': 'Medium',
                 'description': f"Recent activity volume ({recent_avg:.1f} events/day) is {recent_avg/avg_events_per_day:.1f}x higher than historical average.",
                 'metrics': {
-                    'historical_avg': round(avg_events_per_day, 2),
-                    'recent_avg': round(recent_avg, 2),
-                    'multiplier': round(recent_avg/avg_events_per_day, 1)
+                    'historical_avg': float(round(avg_events_per_day, 2)),
+                    'recent_avg': float(round(recent_avg, 2)),
+                    'multiplier': float(round(recent_avg/avg_events_per_day, 1)) if avg_events_per_day > 0 else 0.0
                 }
             })
 
@@ -173,8 +173,13 @@ class TemporalPatternDetector:
                 
             h_mean = historic[metric].mean()
             r_mean = recent[metric].mean()
+
+            # NaN protection
+            if np.isnan(h_mean): h_mean = 0.0
+            if np.isnan(r_mean): r_mean = 0.0
             
             # If 2x increase and absolute difference is material
+            # Add zero-division check for h_mean
             if h_mean > 0 and r_mean > (h_mean * 2.0):
                 significant_drifts.append(f"{metric.replace('_', ' ')} increased {r_mean/h_mean:.1f}x")
 
@@ -193,10 +198,12 @@ class TemporalPatternDetector:
         return self.detected_patterns
 
     def get_summary(self) -> Dict:
+        # Ensure all values are JSON compatible types
+        highest_severity = max([p['severity'] for p in self.detected_patterns], default='Low')
         return {
             'user_id': self.user_id,
-            'pattern_count': len(self.detected_patterns),
-            'highest_severity': max([p['severity'] for p in self.detected_patterns], default='Low'),
+            'pattern_count': int(len(self.detected_patterns)), # Cast to int
+            'highest_severity': highest_severity,
             'patterns': [p['type'] for p in self.detected_patterns]
         }
 
@@ -229,14 +236,32 @@ class TemporalManager:
         for d in self.detectors.values():
             all_patterns.extend(d.get_patterns())
             
+        total_user_count = max(len(self.detectors), 1)
+        
+        # Calculate severity counts
+        severity_counts = defaultdict(int)
+        for p in all_patterns:
+            severity_counts[p['severity']] += 1
+
+        # Count users with at least one pattern
+        users_with_patterns = sum(1 for d in self.detectors.values() if len(d.detected_patterns) > 0)
+
         return {
-            'total_users_tracked': len(self.detectors),
-            'total_patterns_detected': len(all_patterns),
+            'total_users_tracked': int(len(self.detectors)),
+            'total_patterns_detected': int(len(all_patterns)),
+            'users_with_patterns': int(users_with_patterns),
+            'avg_patterns_per_user': float(round(len(all_patterns) / total_user_count, 2)),
             'by_type': {
-                'low_and_slow': len([p for p in all_patterns if p['type'] == 'low_and_slow']),
-                'frequency_spike': len([p for p in all_patterns if p['type'] == 'frequency_spike']),
-                'novelty': len([p for p in all_patterns if p['type'] == 'novelty']),
-                'behavioral_drift': len([p for p in all_patterns if p['type'] == 'behavioral_drift'])
+                'low_and_slow': int(len([p for p in all_patterns if p['type'] == 'low_and_slow'])),
+                'frequency_spike': int(len([p for p in all_patterns if p['type'] == 'frequency_spike'])),
+                'novelty': int(len([p for p in all_patterns if p['type'] == 'novelty'])),
+                'behavioral_drift': int(len([p for p in all_patterns if p['type'] == 'behavioral_drift']))
+            },
+            'by_severity': {
+                'Critical': int(severity_counts['Critical']),
+                'High': int(severity_counts['High']),
+                'Medium': int(severity_counts['Medium']),
+                'Low': int(severity_counts['Low'])
             }
         }
 

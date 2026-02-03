@@ -113,7 +113,14 @@ class RiskTrajectory:
         
         # Calculate decay-weighted risk
         if 'anomaly_score' in self.events.columns:
-            self.events['weighted_risk'] = self.events['anomaly_score'] * self.events['decay_factor']
+            # Clean NaNs before calculation
+            score_series = self.events['anomaly_score'].fillna(0)
+            age_series = self.events['days_ago']
+            
+            # Ensure decay_factor is also a series for element-wise multiplication
+            decay_factors_series = self.events['decay_factor']
+            
+            self.events['weighted_risk'] = score_series * decay_factors_series
         else:
             self.events['weighted_risk'] = 0.0
         
@@ -139,19 +146,23 @@ class RiskTrajectory:
             
             # Cumulative risk up to this date
             cumulative_to_date = float(group['weighted_risk'].sum())
-            
+            if np.isnan(cumulative_to_date):
+                cumulative_to_date = 0.0
+                
             # Average decay factor for this date
             avg_decay = float(group['decay_factor'].mean())
+            if np.isnan(avg_decay):
+                avg_decay = 1.0
             
             timeline.append({
                 'date': str(date),
-                'events': event_count,
-                'avg_risk': round(avg_risk, 4),
-                'cumulative_risk': round(cumulative_to_date, 4),
-                'avg_decay_factor': round(avg_decay, 4),
-                'high_risk_events': high_risk,
-                'medium_risk_events': medium_risk,
-                'low_risk_events': low_risk
+                'events': int(event_count),
+                'avg_risk': float(round(avg_risk, 4)),
+                'cumulative_risk': float(round(cumulative_to_date, 4)),
+                'avg_decay_factor': float(round(avg_decay, 4)),
+                'high_risk_events': int(high_risk),
+                'medium_risk_events': int(medium_risk),
+                'low_risk_events': int(low_risk)
             })
         
         # Sort by date
@@ -331,12 +342,11 @@ class RiskTrajectory:
         """Export complete trajectory as dictionary for API responses."""
         return {
             'user_id': self.user_id,
-            'trajectory': self.get_trajectory(),
-            'current_cumulative_risk': round(self.cumulative_risk, 4),
+            'current_cumulative_risk': float(self.cumulative_risk),
             'trend': self.trend,
-            'is_escalating': self.is_escalating,
-            'escalation_details': self.escalation_details if hasattr(self, 'escalation_details') else {},
-            'summary': self.get_summary()
+            'is_escalating': bool(self.is_escalating),
+            'event_count': int(len(self.events)),
+            'escalation_severity': self.escalation_details.get('severity', 'None') if self.escalation_details else 'None'
         }
 
 

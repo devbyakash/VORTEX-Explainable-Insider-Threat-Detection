@@ -36,6 +36,7 @@ from src.xai_explainer import xai_pipeline, load_data_and_model
 from src.data_generator import generate_synthetic_logs
 from src.feature_engineer import feature_engineering_pipeline
 from src.model_train import model_training_pipeline, MODEL_FEATURES
+from src.user_profile import UserProfile, UserProfileManager, initialize_profile_manager, get_profile_manager
 
 # Import logging
 try:
@@ -99,6 +100,8 @@ class ExplanationResponse(BaseModel):
     event_id: str
     base_value: float
     explanation: List[FeatureContribution]
+    narrative: str
+    mitigation_suggestions: List[str]
 
 class HealthStatus(BaseModel):
     """System health check response."""
@@ -149,6 +152,31 @@ class BatchPredictionResponse(BaseModel):
     total_processed: int
     high_risk_count: int
 
+# Phase 2A: User Baseline Schemas
+class UserSummary(BaseModel):
+    """Summary information for a user (for listing)."""
+    user_id: str
+    event_count: int
+    baseline_risk_level: str
+    baseline_score: float
+    confidence: float
+
+class UserBaseline(BaseModel):
+    """Detailed baseline information for a user."""
+    user_id: str
+    baseline: Dict[str, Any]
+    behavioral_fingerprint: Dict[str, Any]
+    baseline_risk_level: str
+    is_baseline_elevated: bool
+    data_quality: Dict[str, Any]
+
+class DivergenceAnalysis(BaseModel):
+    """Divergence analysis for an event compared to user's baseline."""
+    divergence_score: float
+    divergence_level: str
+    divergence_details: List[str]
+    baseline_comparison: Dict[str, Any]
+
 # =============================================================================
 # GLOBAL DATA STORE
 # =============================================================================
@@ -160,6 +188,7 @@ class DataStore:
         self.model = None
         self.last_loaded: Optional[datetime] = None
         self.metrics: Optional[Dict] = None
+        self.profile_manager: Optional[UserProfileManager] = None  # Phase 2A: User baselines
     
     def load(self):
         """Load or reload data and model."""
@@ -167,6 +196,13 @@ class DataStore:
             self.df = load_processed_data()
             self.model = load_model()
             self.last_loaded = datetime.now()
+            
+            # Phase 2A: Initialize user profiles
+            if self.df is not None:
+                logger.info("Initializing user profile baselines...")
+                self.profile_manager = initialize_profile_manager(self.df)
+                logger.info(f"✅ Loaded {len(self.profile_manager.profiles)} user profiles")
+            
             logger.info("Data and model loaded successfully")
         except Exception as e:
             logger.error(f"Error loading data/model: {e}")
@@ -407,6 +443,108 @@ def get_user_risks(user_id: str, limit: int = 10):
         max_anomaly_score=max_score,
         recent_events=recent_events
     )
+
+# =============================================================================
+# Phase 2A: USER BASELINE ENDPOINTS
+# =============================================================================
+
+@app.get("/users", response_model=List[UserSummary], summary="Get All Users with Baselines")
+def get_all_users():
+    """
+    Returns a list of all users with their baseline information.
+    
+    Useful for populating user selection dropdowns in frontend.
+    """
+    if not data_store.is_loaded():
+        raise HTTPException(status_code=503, detail="Service data not loaded")
+    
+    if data_store.profile_manager is None:
+        raise HTTPException(status_code=503, detail="User profiles not initialized")
+    
+    try:
+        users = data_store.profile_manager.get_all_users()
+        return [UserSummary(**user) for user in users]
+    except Exception as e:
+        logger.error(f"Error getting users: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/users/{user_id}/baseline", response_model=UserBaseline, summary="Get User Baseline Details")
+def get_user_baseline(user_id: str):
+    """
+    Returns detailed baseline information for a specific user.
+    
+    Includes:
+    - Baseline metrics (avg file access, upload sizes, typical hours, etc.)
+    - Behavioral fingerprint (USB usage, sensitive file patterns, etc.)
+    - Baseline risk level
+    - Data quality/confidence metrics
+    
+    - **user_id**: User ID to get baseline for
+    """
+    if not data_store.is_loaded():
+        raise HTTPException(status_code=503, detail="Service data not loaded")
+    
+    if data_store.profile_manager is None:
+        raise HTTPException(status_code=503, detail="User profiles not initialized")
+    
+    try:
+        profile = data_store.profile_manager.get_profile(user_id)
+        
+        if profile is None:
+            raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+        
+        return UserBaseline(**profile.to_dict())
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting baseline for {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/users/{user_id}/divergence/{event_id}", response_model=DivergenceAnalysis,
+         summary="Get Divergence Analysis for Event")
+def get_divergence_analysis(user_id: str, event_id: str):
+    """
+    Calculates how much an event diverges from the user's baseline behavior.
+    
+    Returns:
+    - Divergence score (0.0 to 2.0+)
+    - Divergence level (Low/Medium/High)
+    - Detailed explanations of what diverged
+    - Comparison with user's baseline
+    
+    - **user_id**: User ID
+    - **event_id**: Event ID to analyze
+    """
+    if not data_store.is_loaded():
+        raise HTTPException(status_code=503, detail="Service data not loaded")
+    
+    if data_store.profile_manager is None:
+        raise HTTPException(status_code=503, detail="User profiles not initialized")
+    
+    try:
+        # Get user profile
+        profile = data_store.profile_manager.get_profile(user_id)
+        if profile is None:
+            raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+        
+        # Get event
+        event_row = data_store.df[data_store.df['event_id'] == event_id]
+        if event_row.empty:
+            raise HTTPException(status_code=404, detail=f"Event {event_id} not found")
+        
+        # Calculate divergence
+        event = event_row.iloc[0]
+        divergence = profile.calculate_divergence(event)
+        
+        return DivergenceAnalysis(**divergence)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error calculating divergence: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/explain/{event_id}", response_model=ExplanationResponse, summary="Get SHAP Explanation")
 def get_explanation(event_id: str):

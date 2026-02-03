@@ -39,6 +39,7 @@ from src.model_train import model_training_pipeline, MODEL_FEATURES
 from src.user_profile import UserProfile, UserProfileManager, initialize_profile_manager, get_profile_manager
 from src.risk_trajectory import RiskTrajectory, TrajectoryManager, initialize_trajectory_manager, get_trajectory_manager
 from src.event_chains import EventChainDetector, ChainDetectorManager, initialize_chain_detector, get_chain_detector_manager
+from src.temporal_patterns import TemporalPatternDetector, TemporalManager, initialize_temporal_manager, get_temporal_manager
 
 # Import logging
 try:
@@ -271,6 +272,23 @@ class ChainStatistics(BaseModel):
     users_with_chains: int
     avg_chains_per_user: float
 
+# Phase 2A Session 5: Temporal Pattern Schemas
+class TemporalPattern(BaseModel):
+    """Detected behavioral pattern over time."""
+    type: str
+    name: str
+    severity: str
+    description: str
+    confidence: Optional[float] = None
+    metrics: Optional[Dict[str, Any]] = None
+    timestamp: Optional[str] = None
+
+class TemporalStatistics(BaseModel):
+    """Overall statistics for temporal behavior patterns."""
+    total_users_tracked: int
+    total_patterns_detected: int
+    by_type: Dict[str, int]
+
 # =============================================================================
 # GLOBAL DATA STORE
 # =============================================================================
@@ -285,6 +303,7 @@ class DataStore:
         self.profile_manager: Optional[UserProfileManager] = None  # Phase 2A: User baselines
         self.trajectory_manager: Optional[TrajectoryManager] = None  # Phase 2A: Risk trajectories
         self.chain_manager: Optional[ChainDetectorManager] = None  # Phase 2A: Event chains
+        self.temporal_manager: Optional[TemporalManager] = None  # Phase 2A: Temporal patterns
     
     def load(self):
         """Load or reload data and model."""
@@ -308,6 +327,11 @@ class DataStore:
                 logger.info("Initializing event chain detection...")
                 self.chain_manager = initialize_chain_detector(self.df)
                 logger.info(f"✅ Detected {len(self.chain_manager.get_all_chains())} attack chains")
+                
+                # Phase 2A Session 5: Initialize temporal patterns
+                logger.info("Initializing temporal pattern analysis...")
+                self.temporal_manager = initialize_temporal_manager(self.df)
+                logger.info(f"✅ Analyzed behavioral history for {len(self.temporal_manager.detectors)} users")
             
             logger.info("Data and model loaded successfully")
         except Exception as e:
@@ -964,6 +988,55 @@ def get_chain_statistics():
         return ChainStatistics(**data_store.chain_manager.get_statistics())
     except Exception as e:
         logger.error(f"Error getting chain statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Phase 2A Session 5: TEMPORAL PATTERN ENDPOINTS
+# =============================================================================
+
+@app.get("/users/{user_id}/patterns", response_model=List[TemporalPattern],
+         summary="Get User Temporal Patterns")
+def get_user_temporal_patterns(user_id: str):
+    """
+    Returns detected temporal patterns for a specific user.
+    
+    Identifies Low-and-Slow attacks, Novelty events,
+    Frequency spikes, and Behavioral drift.
+    """
+    if not data_store.is_loaded():
+        raise HTTPException(status_code=503, detail="Service data not loaded")
+    
+    if data_store.temporal_manager is None:
+        raise HTTPException(status_code=503, detail="Temporal manager not initialized")
+    
+    try:
+        patterns = data_store.temporal_manager.get_user_patterns(user_id)
+        if not patterns and user_id not in data_store.temporal_manager.detectors:
+            raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+            
+        return [TemporalPattern(**p) for p in patterns]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting patterns for {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/analytics/temporal-statistics", response_model=TemporalStatistics,
+         summary="Get Temporal Pattern Statistics")
+def get_temporal_statistics():
+    """Returns global statistics about behavioral patterns across all users."""
+    if not data_store.is_loaded():
+        raise HTTPException(status_code=503, detail="Service data not loaded")
+    
+    if data_store.temporal_manager is None:
+        raise HTTPException(status_code=503, detail="Temporal manager not initialized")
+    
+    try:
+        return TemporalStatistics(**data_store.temporal_manager.get_statistics())
+    except Exception as e:
+        logger.error(f"Error getting temporal statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/explain/{event_id}", response_model=ExplanationResponse, summary="Get SHAP Explanation")

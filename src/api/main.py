@@ -37,6 +37,7 @@ from src.data_generator import generate_synthetic_logs
 from src.feature_engineer import feature_engineering_pipeline
 from src.model_train import model_training_pipeline, MODEL_FEATURES
 from src.user_profile import UserProfile, UserProfileManager, initialize_profile_manager, get_profile_manager
+from src.risk_trajectory import RiskTrajectory, TrajectoryManager, initialize_trajectory_manager, get_trajectory_manager
 
 # Import logging
 try:
@@ -177,6 +178,48 @@ class DivergenceAnalysis(BaseModel):
     divergence_details: List[str]
     baseline_comparison: Dict[str, Any]
 
+# Phase 2A Session 3: Risk Trajectory Schemas
+class TrajectoryTimepoint(BaseModel):
+    """Single data point in risk trajectory timeline."""
+    date: str
+    events: int
+    avg_risk: float
+    cumulative_risk: float
+    avg_decay_factor: float
+    high_risk_events: int
+    medium_risk_events: int
+    low_risk_events: int
+    running_cumulative_risk: Optional[float] = None
+
+class EscalationDetails(BaseModel):
+    """Details about risk escalation detection."""
+    recent_7d_avg: float
+    previous_7d_avg: float
+    percent_change: float
+    recent_event_count: int
+    previous_event_count: int
+    threshold_met: bool
+    severity: str
+
+class TrajectoryData(BaseModel):
+    """Complete risk trajectory data for a user."""
+    user_id: str
+    trajectory: List[TrajectoryTimepoint]
+    current_cumulative_risk: float
+    trend: str
+    is_escalating: bool
+    escalation_details: Optional[EscalationDetails] = None
+    summary: Dict[str, Any]
+
+class TrajectoryStatistics(BaseModel):
+    """Overall trajectory statistics across all users."""
+    total_users: int
+    escalating_count: int
+    stable_count: int
+    declining_count: int
+    avg_cumulative_risk: float
+    escalation_rate: float
+
 # =============================================================================
 # GLOBAL DATA STORE
 # =============================================================================
@@ -189,6 +232,7 @@ class DataStore:
         self.last_loaded: Optional[datetime] = None
         self.metrics: Optional[Dict] = None
         self.profile_manager: Optional[UserProfileManager] = None  # Phase 2A: User baselines
+        self.trajectory_manager: Optional[TrajectoryManager] = None  # Phase 2A: Risk trajectories
     
     def load(self):
         """Load or reload data and model."""
@@ -202,6 +246,11 @@ class DataStore:
                 logger.info("Initializing user profile baselines...")
                 self.profile_manager = initialize_profile_manager(self.df)
                 logger.info(f"✅ Loaded {len(self.profile_manager.profiles)} user profiles")
+                
+                # Phase 2A Session 3: Initialize risk trajectories
+                logger.info("Initializing risk trajectories...")
+                self.trajectory_manager = initialize_trajectory_manager(self.df)
+                logger.info(f"✅ Calculated {len(self.trajectory_manager.trajectories)} risk trajectories")
             
             logger.info("Data and model loaded successfully")
         except Exception as e:
@@ -545,6 +594,176 @@ def get_divergence_analysis(user_id: str, event_id: str):
         logger.error(f"Error calculating divergence: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# =============================================================================
+# Phase 2A Session 3: RISK TRAJECTORY ENDPOINTS
+# =============================================================================
+
+@app.get("/users/{user_id}/trajectory", response_model=TrajectoryData, 
+         summary="Get User Risk Trajectory")
+def get_user_trajectory(user_id: str, lookback_days: Optional[int] = None):
+    """
+    Returns risk trajectory timeline for a user.
+    
+    Shows how user's risk has evolved over time with temporal decay.
+    
+    Args:
+        user_id: User ID to analyze
+        lookback_days: Optional number of days to include (default: all)
+    
+    Returns:
+        Complete trajectory data with timeline, escalation status, trend
+    """
+    if not data_store.is_loaded():
+        raise HTTPException(status_code=503, detail="Service data not loaded")
+    
+    if data_store.trajectory_manager is None:
+        raise HTTPException(status_code=503, detail="Trajectory manager not initialized")
+    
+    try:
+        trajectory = data_store.trajectory_manager.get_trajectory(user_id)
+        
+        if trajectory is None:
+            raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+        
+        # Get trajectory data (optionally filtered by lookback)
+        timeline = trajectory.get_trajectory(lookback_days=lookback_days)
+        
+        # Build response
+        escalation_details = None
+        if hasattr(trajectory, 'escalation_details') and trajectory.escalation_details:
+            escalation_details = EscalationDetails(**trajectory.escalation_details)
+        
+        return TrajectoryData(
+            user_id=trajectory.user_id,
+            trajectory=[TrajectoryTimepoint(**tp) for tp in timeline],
+            current_cumulative_risk=trajectory.cumulative_risk,
+            trend=trajectory.trend,
+            is_escalating=trajectory.is_escalating,
+            escalation_details=escalation_details,
+            summary=trajectory.get_summary()
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting trajectory for {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/users/{user_id}/escalation", summary="Get Escalation Analysis")
+def get_escalation_analysis(user_id: str):
+    """
+    Returns detailed escalation analysis for a user.
+    
+    Analyzes whether user's risk is escalating by comparing recent vs previous activity.
+    
+    Args:
+        user_id: User ID to analyze
+        
+    Returns:
+        Escalation status, details, and severity
+    """
+    if not data_store.is_loaded():
+        raise HTTPException(status_code=503, detail="Service data not loaded")
+    
+    if data_store.trajectory_manager is None:
+        raise HTTPException(status_code=503, detail="Trajectory manager not initialized")
+    
+    try:
+        trajectory = data_store.trajectory_manager.get_trajectory(user_id)
+        
+        if trajectory is None:
+            raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+        
+        return {
+            'user_id': user_id,
+            'is_escalating': trajectory.is_escalating,
+            'trend': trajectory.trend,
+            'escalation_details': trajectory.escalation_details if hasattr(trajectory, 'escalation_details') else {},
+            'current_cumulative_risk': trajectory.cumulative_risk,
+            'recommendation': _get_escalation_recommendation(trajectory)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting escalation for {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/analytics/trending-users", summary="Get Trending Users")
+def get_trending_users(trend: str = 'escalating', limit: int = 20):
+    """
+    Returns users filtered by risk trend.
+    
+    Useful for identifying which users are escalating in risk.
+    
+    Args:
+        trend: Filter by 'escalating', 'stable', or 'declining' (default: escalating)
+        limit: Max number of users to return (default: 20)
+        
+    Returns:
+        List of users matching trend criteria, sorted by cumulative risk
+    """
+    if not data_store.is_loaded():
+        raise HTTPException(status_code=503, detail="Service data not loaded")
+    
+    if data_store.trajectory_manager is None:
+        raise HTTPException(status_code=503, detail="Trajectory manager not initialized")
+    
+    try:
+        if trend == 'escalating':
+            users = data_store.trajectory_manager.get_escalating_users()
+        else:
+            users = data_store.trajectory_manager.get_users_by_trend(trend)
+        
+        # Limit results
+        return users[:limit]
+    except Exception as e:
+        logger.error(f"Error getting trending users: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/analytics/trajectory-statistics", response_model=TrajectoryStatistics,
+         summary="Get Trajectory Statistics")
+def get_trajectory_statistics():
+    """
+    Returns overall statistics across all user trajectories.
+    
+    Provides high-level metrics:
+    - Total users tracked
+    - Count by trend (escalating/stable/declining)
+    - Average cumulative risk
+    - Escalation rate percentage
+    """
+    if not data_store.is_loaded():
+        raise HTTPException(status_code=503, detail="Service data not loaded")
+    
+    if data_store.trajectory_manager is None:
+        raise HTTPException(status_code=503, detail="Trajectory manager not initialized")
+    
+    try:
+        stats = data_store.trajectory_manager.get_statistics()
+        return TrajectoryStatistics(**stats)
+    except Exception as e:
+        logger.error(f"Error getting trajectory statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _get_escalation_recommendation(trajectory: RiskTrajectory) -> str:
+    """Generate recommendation based on escalation status."""
+    if not trajectory.is_escalating:
+        return "No immediate action required. Continue monitoring."
+    
+    severity = trajectory.escalation_details.get('severity', 'Low') if hasattr(trajectory, 'escalation_details') else 'Low'
+    
+    recommendations = {
+        'Critical': "⚠️ URGENT: Immediate investigation required. User shows critical risk escalation.",
+        'High': "⚠️ High priority: Schedule detailed review of user activity within 24 hours.",
+        'Medium': "⚠️ Monitor closely: Increase monitoring frequency and review within 48 hours.",
+        'Low': "ℹ️ Low priority: Continue monitoring and review at next scheduled interval."
+    }
+    
+    return recommendations.get(severity, recommendations['Low'])
 
 @app.get("/explain/{event_id}", response_model=ExplanationResponse, summary="Get SHAP Explanation")
 def get_explanation(event_id: str):

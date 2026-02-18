@@ -946,37 +946,8 @@ def get_escalation_analysis(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/analytics/trending-users", summary="Get Trending Users")
-def get_trending_users(trend: str = 'escalating', limit: int = 20):
-    """
-    Returns users filtered by risk trend.
-    
-    Useful for identifying which users are escalating in risk.
-    
-    Args:
-        trend: Filter by 'escalating', 'stable', or 'declining' (default: escalating)
-        limit: Max number of users to return (default: 20)
-        
-    Returns:
-        List of users matching trend criteria, sorted by cumulative risk
-    """
-    if not data_store.is_loaded():
-        raise HTTPException(status_code=503, detail="Service data not loaded")
-    
-    if data_store.trajectory_manager is None:
-        raise HTTPException(status_code=503, detail="Trajectory manager not initialized")
-    
-    try:
-        if trend == 'escalating':
-            users = data_store.trajectory_manager.get_escalating_users()
-        else:
-            users = data_store.trajectory_manager.get_users_by_trend(trend)
-        
-        # Limit results
-        return users[:limit]
-    except Exception as e:
-        logger.error(f"Error getting trending users: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# Removed duplicate /analytics/trending-users endpoint to avoid conflict.
+# The primary implementation is at the bottom of the file near other analytics endpoints.
 
 
 @app.get("/analytics/trajectory-statistics", response_model=TrajectoryStatistics,
@@ -1168,8 +1139,8 @@ def get_chain_statistics():
 
 @app.get("/analytics/trending-users", response_model=List[TrendingUser],
          summary="Get Most Escalating Users")
-def get_trending_users(limit: int = 5):
-    """Returns users with the highest risk escalation in the last 7 days."""
+def get_trending_users(trend: str = 'escalating', limit: int = 20):
+    """Returns users with the highest risk escalation based on trend."""
     if not data_store.is_loaded():
         raise HTTPException(status_code=503, detail="Service data not loaded")
     
@@ -1177,15 +1148,22 @@ def get_trending_users(limit: int = 5):
         raise HTTPException(status_code=503, detail="Trajectory manager not initialized")
     
     try:
-        escalating = data_store.trajectory_manager.get_escalating_users()
+        if trend == 'escalating':
+            users = data_store.trajectory_manager.get_escalating_users()
+        else:
+            users = data_store.trajectory_manager.get_users_by_trend(trend)
         
         trending = []
-        for user in escalating[:limit]:
+        for user in users[:limit]:
             details = user.get('escalation_details', {})
+            # Use absolute value for percent_change so it plots as positive "velocity" in charts
+            # since risk scores are negative (more negative = more risk).
+            velocity = abs(details.get('percent_change', 0.0))
+            
             trending.append(TrendingUser(
                 user_id=user['user_id'],
                 recent_event_count=details.get('recent_event_count', 0),
-                percent_change=details.get('percent_change', 0.0),
+                percent_change=velocity,
                 escalation_severity=details.get('severity', 'None'),
                 current_risk=user.get('cumulative_risk', 0.0)
             ))

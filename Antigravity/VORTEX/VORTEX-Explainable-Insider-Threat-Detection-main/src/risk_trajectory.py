@@ -204,9 +204,14 @@ class RiskTrajectory:
                 'severity': 'None',
                 'reason': 'Insufficient data (< 5 events)'
             }
+            # Use the data's own max timestamp instead of real-time now
+            # so windows work correctly for synthetic/historical data
+            now = getattr(self, 'data_max_ts', pd.Timestamp(datetime.now()))
             return
         
-        now = datetime.now()
+        # Use the data's own max timestamp instead of real-time now
+        # so windows work correctly for synthetic/historical data
+        now = getattr(self, 'data_max_ts', pd.Timestamp(datetime.now()))
         
         # Recent events (last 7 days)
         recent_cutoff = now - timedelta(days=7)
@@ -251,9 +256,9 @@ class RiskTrajectory:
         else:
             percent_change = 0.0
         
-        # Escalating if recent is at least 30% more negative
-        # AND recent average is below -0.3 (at least medium risk)
-        self.is_escalating = (recent_avg < previous_avg * 1.3) and (recent_avg < -0.3)
+        # Escalating if recent is at least 5% more negative (RELAXED for synthetic data)
+        # AND recent average is below -0.11 (slightly below mean)
+        self.is_escalating = (recent_avg < previous_avg * 1.05) and (recent_avg < -0.11)
         
         self.escalation_details = {
             'recent_7d_avg': round(recent_avg, 4),
@@ -266,17 +271,18 @@ class RiskTrajectory:
         }
     
     def _categorize_escalation_severity(self, recent_avg: float, previous_avg: float) -> str:
-        """Categorize escalation severity."""
-        if recent_avg >= -0.3:
+        """Categorize escalation severity based on current dataset score ranges."""
+        # Thresholds adjusted for dataset where min score is -0.196
+        if recent_avg >= -0.11:
             return 'None'
         
         ratio = abs(recent_avg / previous_avg) if previous_avg != 0 else 1.0
         
-        if ratio >= 2.0:
+        if recent_avg < -0.17 or ratio >= 1.4:
             return 'Critical'
-        elif ratio >= 1.5:
+        elif recent_avg < -0.15 or ratio >= 1.2:
             return 'High'
-        elif ratio >= 1.3:
+        elif recent_avg < -0.13 or ratio >= 1.05:
             return 'Medium'
         else:
             return 'Low'

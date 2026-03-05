@@ -1,34 +1,104 @@
-# --- VORTEX FINAL IGNORE LIST ---
+# # --- VORTEX FINAL IGNORE LIST ---
 
-# 1. Environment & Dependencies
+# # 1. Environment & Dependencies
+# .env
+# venv/
+# env/
+# ENV/
+
+# # 2. Python Artifacts
+# __pycache__/
+# *.pyc
+# *.so
+
+# # 3. Logs & Model Artifacts (DO NOT COMMIT)
+# logs/
+# *.log
+# models/*.pkl
+# models/*.joblib
+
+# # 4. Data Artifacts (CRITICAL: Must be ignored)
+# data/*.csv
+# data/*.log
+
+# # 5. IDE and OS Files
+# .vscode/
+# .idea/
+# *.swp
+# *.swo
+# .DS_Store
+# Thumbs.db
+
+# # 6. Jupyter/Notebooks
+# .ipynb_checkpoints/
+# *.ipynb
+
+# frontend/node_modules/
+# frontend/dist/
+
+
+# =====================================================
+# VORTEX – Explainable Insider Threat Detection
+# Git Ignore Rules
+# =====================================================
+
+# -----------------------------------------------------
+# 1. Environment & Virtual Environments
+# -----------------------------------------------------
 .env
+.env.*
 venv/
 env/
 ENV/
 
-# 2. Python Artifacts
+# -----------------------------------------------------
+# 2. Python Cache / Build Artifacts
+# -----------------------------------------------------
 __pycache__/
 *.pyc
+*.pyo
 *.so
 
-# 3. Logs & Model Artifacts (DO NOT COMMIT)
+# -----------------------------------------------------
+# 3. Logs
+# -----------------------------------------------------
 logs/
 *.log
+
+# -----------------------------------------------------
+# 4. Model Artifacts (Generated)
+# -----------------------------------------------------
 models/*.pkl
 models/*.joblib
 
-# 4. Data Artifacts (CRITICAL: Must be ignored)
+# -----------------------------------------------------
+# 5. Generated Data Artifacts
+# -----------------------------------------------------
 data/*.csv
 data/*.log
 
-# 5. IDE and OS Files
+# -----------------------------------------------------
+# 6. Frontend Build Artifacts
+# -----------------------------------------------------
+frontend/node_modules/
+frontend/dist/
+
+# -----------------------------------------------------
+# 7. IDE / Editor Files
+# -----------------------------------------------------
 .vscode/
 .idea/
 *.swp
 *.swo
+
+# -----------------------------------------------------
+# 8. OS Generated Files
+# -----------------------------------------------------
 .DS_Store
 Thumbs.db
 
-# 6. Jupyter/Notebooks
+# -----------------------------------------------------
+# 9. Jupyter Notebook Artifacts
+# -----------------------------------------------------
 .ipynb_checkpoints/
 *.ipynb
